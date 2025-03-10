@@ -9,7 +9,7 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # config for thinker engine
 # NOTE: thinker must be a Reasoning model
-thinker_model_name_or_path="/mnt/workspace/pretrain_model/qwen2/Qwen/QwQ-32B"
+thinker_model_name_or_path="Qwen/QwQ-32B"
 thinker_name="thinker"
 thinker_gpu_ids="0,1,2,3"
 thinker_port="8009"
@@ -17,7 +17,7 @@ thinker_uri="http://localhost:${thinker_port}/v1"
 
 # config for summarizer engine
 # NOTE: summarizer must be a Instruct model
-summarizer_model_name_or_path="/mnt/workspace/chenbin/weights/Qwen2.5-7B-Instruct"
+summarizer_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 summarizer_name="summarizer"
 summarizer_gpu_ids="4,5"
 summarizer_port="8010"
