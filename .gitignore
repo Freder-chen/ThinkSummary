@@ -1,0 +1,20 @@
+# Ignore intermediate results
+logs/
+
+__pycache__/
+
+# Ignore compiled files
+*.obj
+*.exe
+*.o
+
+# Ignore temporary files
+*.tmp
+*.log
+*.txt
+
+# Ignore binary files
+*.bin
+
+# Ignore OS-specific files
+.DS_Store
