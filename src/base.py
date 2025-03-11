@@ -4,14 +4,49 @@ from openai import OpenAI
 from transformers import AutoTokenizer
 
 
-SUMMARY_PROMPT = '''
-你是一个专业的文本摘要生成器。请根据以下要求总结提供的思考内容：
+# SUMMARY_PROMPT = '''
+# 你是一个专业的文本摘要生成器。请根据以下要求总结提供的思考内容：
 
-仅提取关键步骤和结论，去除示例、详细解释及重复内容。无需二次总结思考内容。
-使用简洁的中文分点陈述，保留原有逻辑结构。
-不添加任何分析、建议或格式模板，仅输出纯文本总结。
+# 仅提取关键步骤和结论，去除示例、详细解释及重复内容。无需二次总结思考内容。
+# 使用简洁的中文分点陈述，保留原有逻辑结构。
+# 不添加任何分析、建议或格式模板，仅输出纯文本总结。
 
-思考内容：
+# 思考内容：
+# {content}
+# '''.strip()
+
+
+SUMMARY_PART_PROMPT = '''
+你负责提炼输入的思维链片段，生成处理流程的核心方法论节点，用于清晰展示当前思维链的执行进程。
+
+提炼规则：
+1. 每个节点用独立判断句表述正在执行的方法论步骤。
+2. 按处理顺序排列，节点间空行分隔。
+3. 特别注意：排除思维链中所有与输出格式、内容长度或结构相关的具体要求。
+
+输出格式：
+1. 单句独立成行。
+2. 句间保留空行。
+3. 与输入思维链保持相同语言体系。
+
+输入的思维链片段（实时生成中）：
+{content}
+'''.strip()
+
+SUMMARY_TOTAL_PROMPT = '''
+你负责提炼输入的完整思维链，生成处理流程的核心方法论节点，用于清晰展示当前思维链的执行进程。
+
+提炼规则：
+1. 每个节点用独立判断句表述正在执行的方法论步骤。
+2. 按处理顺序排列，节点间空行分隔。
+3. 特别注意：排除思维链中所有与输出格式、内容长度或结构相关的具体要求。
+
+输出格式：
+1. 单句独立成行。
+2. 句间保留空行。
+3. 与输入思维链保持相同语言体系。
+
+输入的完整思维链：
 {content}
 '''.strip()
 
@@ -43,30 +78,31 @@ class Generator:
             model=self.model,
             messages=messages,
             stream=True,
-            max_tokens=kwargs.get("max_token", 8192),
-            temperature=kwargs.get("temperature", 0.7),
-            frequency_penalty=kwargs.get("frequency_penalty", 1.05),
+            **kwargs
         )
         for chunk in response:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
     def stream_generate(self, prompt, **kwargs):
-        max_token = kwargs.get("max_token", 8192)
-        temperature = kwargs.get("temperature", 0.7)
-        frequency_penalty = kwargs.get("frequency_penalty", 1.05)
-
         response = self.client.completions.create(
             model=self.model,
             prompt=prompt,
             stream=True,
-            max_tokens=max_token,
-            temperature=temperature,
-            frequency_penalty=frequency_penalty,
+            **kwargs
         )
         for chunk in response:
             if chunk.choices[0].text:
                 yield chunk.choices[0].text
+    
+    def generate(self, prompt, **kwargs):
+        response = self.client.completions.create(
+            model=self.model,
+            prompt=prompt,
+            stream=False,
+            **kwargs
+        )
+        return response.choices[0].text
 
 
 class StreamProcessor:
@@ -83,7 +119,7 @@ class StreamProcessor:
         self.is_answer_phase = False
         self.trigger_summary = False
 
-    def process_thinking_stream(self, thinking_stream):
+    def process_thinking_stream(self, thinking_stream, **kwargs):
         for chunk in thinking_stream:
             if self.is_reasoning_phase:
                 self._process_reason_chunk(chunk)
@@ -96,7 +132,8 @@ class StreamProcessor:
                     self.is_answer_phase = True
 
             if self.trigger_summary and self.reason_buffer:
-                yield from self._handle_summary_generation()
+                prompt_template = SUMMARY_PART_PROMPT if self.is_reasoning_phase else SUMMARY_TOTAL_PROMPT
+                yield from self._handle_summary_generation(prompt_template, **kwargs)
             
             yield from self._handle_answer_output()
 
@@ -119,17 +156,18 @@ class StreamProcessor:
     def _process_answer_chunk(self, chunk):
         self.answer_buffer.append(chunk)
 
-    def _handle_summary_generation(self):
+    def _handle_summary_generation(self, prompt_template, **kwargs):
         current_reason = ''.join(self.reason_buffer)
         current_summary = ''.join(self.summary_buffer)
-        summary_stream = self._generate_summary(current_reason, current_summary)
+
+        prompt = prompt_template.format(content=current_reason)
+        summary_stream = self._generate_summary(prompt, current_summary, **kwargs)
         for summary_chunk in summary_stream:
             self.summary_buffer.append(summary_chunk)
             yield ('summary', summary_chunk)
         self.trigger_summary = False
 
-    def _generate_summary(self, reason_text, summary_text):
-        prompt = SUMMARY_PROMPT.format(content=reason_text)
+    def _generate_summary(self, prompt, summary_text, **kwargs):
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
@@ -137,7 +175,8 @@ class StreamProcessor:
         input_text = self.summarizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         ) + summary_text
-        return self.summarizer.stream_generate(input_text)
+        return self.summarizer.stream_generate(input_text, **kwargs)
+        # return [self.summarizer.generate(input_text, **kwargs)] # debug
 
     def _handle_answer_output(self):
         while self.answer_buffer:
@@ -178,12 +217,17 @@ def main(prompt):
     )
 
     messages = [{"role": "user", "content": prompt}]
-    thinking_stream = thinker.stream_chat(messages)
+    thinking_stream = thinker.stream_chat(
+        messages, frequency_penalty=1.0, temperature=0.6, top_p=0.95
+    )
     summary_processor = StreamProcessor(summarizer, summary_trigger_size=100)
     
     summary_header_printed = False
     answer_header_printed = False
-    for event_type, content in summary_processor.process_thinking_stream(thinking_stream):
+    summary_stream = summary_processor.process_thinking_stream(
+        thinking_stream, frequency_penalty=1.05, temperature=0.7, top_p=0.8
+    )
+    for event_type, content in summary_stream:
         if event_type == 'summary':
             if not summary_header_printed:
                 print("\n【实时摘要】", flush=True)

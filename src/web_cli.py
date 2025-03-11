@@ -19,16 +19,29 @@ class GradioClient:
         )
         self.summary_processor = StreamProcessor(
             summarizer,
-            summary_trigger_size=200
+            summary_trigger_size=512
         )
     
     def stream_response(self, prompt):
         messages = [{"role": "user", "content": prompt}]
-        thinking_stream = self.thinker.stream_chat(messages)
+        thinking_stream = self.thinker.stream_chat(
+            messages,
+            # frequency_penalty=1.0,
+            # temperature=0.7,
+            # top_p=0.8,
+            max_tokens=1024 * 16
+        )
         
         summary_buffer = []
         answer_buffer = []
-        for event_type, content in self.summary_processor.process_thinking_stream(thinking_stream):
+        summary_stream = self.summary_processor.process_thinking_stream(
+            thinking_stream,
+            frequency_penalty=1.05,
+            temperature=0.7,
+            top_p=0.8,
+            max_tokens=1024
+        )
+        for event_type, content in summary_stream:
             if event_type == "summary":
                 summary_buffer.append(content)
                 yield {
